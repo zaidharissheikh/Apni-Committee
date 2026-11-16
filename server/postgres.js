@@ -43,6 +43,7 @@ export function createPostgresStore(pool) {
         await query('SELECT pg_advisory_xact_lock(72861940)');
         for (const statement of schema.split(';').map(s => s.trim()).filter(Boolean)) await query(statement);
         await query('INSERT INTO migrations(name) VALUES(?) ON CONFLICT(name) DO NOTHING', ['postgres-v1']);
+        await query('INSERT INTO migrations(name) VALUES(?) ON CONFLICT(name) DO NOTHING', ['invite-entries-v1']);
       });
     },
     close() { return pool.end(); }

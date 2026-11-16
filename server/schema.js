@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NO
 CREATE TABLE IF NOT EXISTS committees(id TEXT PRIMARY KEY, owner_id TEXT REFERENCES users(id), data TEXT NOT NULL, created_at BIGINT NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS memberships(committee_id TEXT NOT NULL REFERENCES committees(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), member_id TEXT NOT NULL, PRIMARY KEY(committee_id,user_id), UNIQUE(committee_id,member_id));
 CREATE TABLE IF NOT EXISTS invites(token_hash TEXT PRIMARY KEY, committee_id TEXT NOT NULL REFERENCES committees(id) ON DELETE CASCADE, member_id TEXT, expires_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS invite_options(token_hash TEXT PRIMARY KEY REFERENCES invites(token_hash) ON DELETE CASCADE, entries INTEGER NOT NULL CHECK(entries BETWEEN 1 AND 12), used_by TEXT REFERENCES users(id));
 CREATE TABLE IF NOT EXISTS attempts(key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS committees_owner ON committees(owner_id);

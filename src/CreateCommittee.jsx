@@ -92,7 +92,7 @@ export default function CreateCommittee({ onClose, onCreate }) {
 
       <div className="form-summary"><span>Monthly pot <b>{money(total * Number(amount || 0))}</b></span><span>Session length <b>{total} months</b></span>{existing && <span>Already settled <b>{count} months</b></span>}</div>
       {error && <p className="error" role="alert">{error}</p>}
-      <p className="helper">You will manage this committee as its Bukki. Add people and assign shares before the first collection or random draw.</p>
+      <p className="helper">You will manage this committee as its Bukki. Later entries extend the session and add catch-up contributions and extra payouts for settled months.</p>
       <button className="primary form-submit" disabled={busy}>{busy ? 'Saving committee…' : existing ? 'Bring my committee online' : 'Bismillah, start committee'}<ArrowRight size={18}/></button>
     </form>
   </dialog>;

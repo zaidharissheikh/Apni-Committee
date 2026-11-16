@@ -118,11 +118,16 @@ Then verify the signed-in flows:
 
 1. Sign in with an imported account (or create one if starting fresh). Check its committees and payout history.
 2. Sign in with a different account in an incognito window. Its committee list should be separate.
-3. Create an invitation as the Bukki. Open it in that second account; it should join with viewing access, with no drawing, collection, invitation or deletion controls.
+3. Create an invitation as the Bukki. Open it in that second account; it should receive the Bukki’s chosen entries while keeping member access, with no drawing, collection, invitation or deletion controls. Check that the session end month and pot update.
 4. Refresh and sign back in to confirm the database persists records and sessions across requests.
-5. Revoke the invitation, then try it with an account that has not joined; it should fail.
+5. After joining an active committee, check the catch-up ledger: collect the newcomer’s earlier contributions, then confirm the extra payouts to previous winners. New draws and regular payouts wait for those balances to settle.
+6. Try a used invitation with another account; it should fail. Revoke outstanding invitations and check those fail too.
 
 If your Vercel project uses deployment protection, make the Production app accessible to the people you intend to invite in the project's protection settings. The app still requires its own login. Do not disable Preview protection just to test a Production invite.
+
+## Updating invitation entry allocations
+
+After pulling this update, run `npm run db:migrate` using the same Production DATABASE_URL, then deploy the updated source. This adds the invite_options table without changing the existing invites table, so the previous deployment keeps working during the upgrade. Existing committees, accounts and records are preserved. Older links without a preset default to one entry; issue a new link when a different allocation is needed. Members who already joined with zero entries can be assigned entries from the Members tab, including on active committees.
 
 ## Troubleshooting
 

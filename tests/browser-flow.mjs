@@ -165,7 +165,7 @@ try {
   assert.deepEqual(await (await request(url + '/api/committees')).json(), []);
   await page.reload({ waitUntil: 'networkidle0' });
   await page.waitForSelector('.welcome');
-  // A separate browser context follows an invitation through signup and remains view-only.
+  // A separate browser context follows an entry allocation through signup and keeps member permissions.
   await page.setViewport({width:1280,height:900});
   const privateInput={name:'Invite QA',amount:1000,start:'2026-11',bukkiIndex:0,bukkiFirst:false,members:[{name:'Bukki',entries:1},{name:'Manual member',entries:1}]};
   const privateCommittee=await (await request(url+'/api/committees',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(privateInput)})).json();
@@ -173,6 +173,7 @@ try {
   await page.waitForSelector('.committee-select');
   await click('Invite members');
   await page.waitForSelector('.invite-dialog[open]');
+  await set('#invite-entries','2');
   await click('Create invite link');
   await page.waitForSelector('#invite-link');
   const inviteLink=await page.$eval('#invite-link',e=>e.value);
@@ -204,18 +205,41 @@ try {
   await memberPage.waitForSelector('.role-badge');
   assert.equal(await memberPage.$('#auth-email'),null,'Session persists through reload.');
   await memberContext.close();
-  // The owner sees the new viewer and can assign shares before any financial activity.
+  // Entries are assigned on join; the owner can still repair an older zero-entry member.
   await page.reload({waitUntil:'networkidle0'});
   await page.waitForSelector('.committee-select');
   await click('Members');
+  await page.waitForFunction(()=>document.querySelector('.members-table')?.textContent.includes('invited'));
+  assert.equal((await state()).entries.length,4);
+  await click('Add member');
+  await set('[aria-label="New member name"]','Older viewing member');
+  await set('[aria-label="New member shares"]','0');
+  await page.evaluate(()=>document.querySelector('.add-member-form').requestSubmit());
   await page.waitForSelector('.share-assignment');
   await click('Assign shares');
   await page.waitForFunction(()=>!document.querySelector('.share-assignment'));
-  assert.equal((await state()).entries.length,3);
+  assert.equal((await state()).entries.length,5);
   // Combobox Escape closes without changing the selection.
   await page.click('#committee');
   await page.keyboard.press('Escape');
   assert.equal(await page.$eval('#committee',e=>e.getAttribute('aria-expanded')),'false');
+  // An existing settled month gets its own catch-up collection and extra payout controls.
+  const imported=await (await request(url+'/api/committees',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...privateInput,name:'Catch-up QA',start:'2020-11',history:[{memberIndex:0,settled:true}]})})).json();
+  await page.reload({waitUntil:'networkidle0'});await page.waitForSelector('.committee-select');
+  await select('Choose committee',imported.id);await click('Members');
+  await click('Add member');await set('[aria-label="New member name"]','Later payer');await set('[aria-label="New member shares"]','2');
+  await page.evaluate(()=>document.querySelector('.add-member-form').requestSubmit());
+  await page.waitForSelector('.catchup-notice');await click('View catch-up ledger');await page.waitForSelector('.catchup-card');
+  assert.equal(await page.$eval('.catchup-card',es=>es.length),1);
+  assert.equal(await page.$eval('.catchup-card .primary',e=>e.disabled),true);
+  await click('Mark catch-up collected');
+  await page.waitForFunction(()=>!document.querySelector('.catchup-card .primary').disabled);
+  await click('Confirm extra payout');
+  await page.waitForFunction(()=>!document.querySelector('.catchup-card'));
+  await page.click('.catchup-filter input');await page.waitForSelector('.catchup-card');
+  assert.equal(await page.$('.catchup-card .primary'),null);
+  assert.match(await page.$eval('.catchup-card',e=>e.textContent),/Extra payout recorded/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Catch-up ledger fits on mobile.');
   assert.deepEqual(pageErrors, []);
   console.log('Browser flow passed: history import, manual ceremony, refresh recovery, reduced motion, mobile fit, confirmed deletion, cancel and wrong-name protection, other-session preservation, persistent deletion, last-session empty state, invitation signup, member permissions, share assignment, session persistence, keyboard dropdown, no browser errors.');
 } finally {

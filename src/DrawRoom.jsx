@@ -11,7 +11,7 @@ function savedCount(key, total) {
   } catch { return 0; }
 }
 
-export default function DrawRoom({ committee, round, busy, onDraw, onLedger }) {
+export default function DrawRoom({ committee, round, busy, blocked, onDraw, onLedger }) {
   const key = progressKey(committee.id, round.id);
   const random = round.draw?.type === 'random';
   const order = random ? round.draw.order : [];
@@ -58,7 +58,7 @@ export default function DrawRoom({ committee, round, busy, onDraw, onLedger }) {
   }, [phase, opened, order.length]);
 
   async function begin() {
-    if (inFlight.current || busy) return;
+    if (inFlight.current || busy || blocked) return;
     inFlight.current = true;
     setPhase('shuffling');
     const result = await onDraw();
@@ -99,7 +99,7 @@ export default function DrawRoom({ committee, round, busy, onDraw, onLedger }) {
 
     <div className="draw-controls">
       {winnerVisible ? <><button className="primary" ref={actionRef} onClick={onLedger}>View collections & payout <ArrowRight size={18}/></button><p>{round.paidAt ? 'Payout recorded.' : `Collect ${money(pot)} and record the transfer to complete this month.`}</p></> :
-        phase === 'idle' ? <><button className="primary" disabled={busy} onClick={begin}><Shuffle size={20}/>{busy ? 'Preparing chits…' : 'Shuffle & draw'}</button><p>The result is saved securely before you open the first chit.</p></> :
+        phase === 'idle' ? blocked ? <><button className="primary" onClick={onLedger}>Settle catch-up balances <ArrowRight size={18}/></button><p>Collect earlier contributions and pay the extra amounts to previous winners before drawing again.</p></> : <><button className="primary" disabled={busy} onClick={begin}><Shuffle size={20}/>{busy ? 'Preparing chits…' : 'Shuffle & draw'}</button><p>The result is saved securely before you open the first chit.</p></> :
           phase === 'shuffling' || phase === 'opening' ? <p role="status">{phase === 'shuffling' ? 'Mixing the folded chits…' : 'Unfolding this chit…'}</p> :
             <><button className="primary" ref={actionRef} onClick={openNext}><Ticket size={20}/>{remaining === 1 ? 'Open the last chit' : opened ? 'Next elimination: open a chit' : 'Pick & open the first chit'}</button><p>{remaining === 1 ? 'The last name standing receives this month’s committee.' : 'Only this chit will open. The rest stay folded.'}</p></>}
     </div>

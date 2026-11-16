@@ -6,14 +6,14 @@ export default function ManageMembers({ committee, busy, onAction }) {
   const [notice, setNotice] = useState('');
   async function submit(e) {
     e.preventDefault();
-    const result = await onAction('members', { name, entries: committee.sharesLocked ? 0 : Number(entries) });
+    const result = await onAction('members', { name, entries: Number(entries) });
     if (result) { setName(''); setAdding(false); setNotice('Member added. Use Invite members to connect their account.'); }
   }
   return <section className="manage-members" aria-label="Bukki member controls">
     <div className="section-heading"><div><h3>Your circle, your call.</h3><p>Add people manually or assign shares to invited members.</p></div><button className="secondary" disabled={busy} onClick={() => setAdding(!adding)} aria-expanded={adding}><UserPlus size={17}/>{adding ? 'Cancel' : 'Add member'}</button></div>
-    {adding && <form className="add-member-form" onSubmit={submit}><label>Member name<input aria-label="New member name" value={name} onChange={e => setName(e.target.value)} required maxLength={60} disabled={busy} autoFocus/></label><label>Shares<input aria-label="New member shares" type="number" min="0" max="12" value={committee.sharesLocked ? 0 : entries} onChange={e => setEntries(e.target.value)} disabled={busy || committee.sharesLocked} required/></label><button className="primary" disabled={busy}><Plus size={17}/>{busy ? 'Saving…' : 'Add member'}</button></form>}
+    {adding && <form className="add-member-form" onSubmit={submit}><label>Member name<input aria-label="New member name" value={name} onChange={e => setName(e.target.value)} required maxLength={60} disabled={busy} autoFocus/></label><label>Entries<input aria-label="New member shares" type="number" min="0" max={Math.min(12, 120 - committee.entries.length)} value={entries} onChange={e => setEntries(e.target.value)} disabled={busy} required/></label><button className="primary" disabled={busy}><Plus size={17}/>{busy ? 'Saving…' : 'Add member'}</button></form>}
     {committee.members.filter(m => m.entries === 0).map(m => <ShareAssignment key={m.id} member={m} locked={committee.sharesLocked} busy={busy} onAction={onAction}/>)}
-    <p className="helper"><Info size={16}/>{committee.sharesLocked ? 'Draws or collections have started, so shares are locked. New members can still view; invite an existing member to connect their current shares.' : 'Assign shares before the first collection or random draw. Each new share adds one month; use 0 shares for viewing access.'}</p>
+    <p className="helper"><Info size={16}/>{committee.sharesLocked ? 'This committee has reached its 120-entry limit.' : 'Each entry extends the session by one month. Adding entries after a payout creates catch-up contributions and extra payouts for previous winners in the ledger.'}</p>
     {notice && <p className="success-notice" role="status"><Check size={16}/>{notice}</p>}
   </section>;
 }

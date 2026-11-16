@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createCommittee,currentRound,draw,payment,payout,eligible,collected,addMember,assignShares,sharesLocked} from '../server/domain.js';
+import {createCommittee,currentRound,draw,payment,payout,eligible,collected,addMember,assignShares,sharesLocked,catchup,topup} from '../server/domain.js';
+import {adjustmentTotals,paidOut,monthlyPot,memberPaid} from '../shared/ledger.js';
 const make=(extra={})=>createCommittee({name:'Test family',amount:5000,start:'2026-12',bukkiIndex:0,bukkiFirst:true,members:[{name:'Bukki',entries:2},{name:'Member B',entries:1},{name:'Member C',entries:1}],...extra});
 const historical=(history,extra={})=>make({start:'2020-11',history,...extra});
 test('history imports contiguous months across years and consumes distinct shares',()=>{
@@ -82,19 +83,21 @@ test('viewing members never change the pot, rounds or collections; their shares 
  assert.equal(c.entries.filter(e=>e.memberId===m.id).length,2);
  assert.throws(()=>assignShares(c,m.id,1),/already has/);
 });
-test('draws, imports and collections freeze shares while allowing new viewers',()=>{
+test('late shares preserve saved draws and collections and add adjustments only to paid rounds',()=>{
  for(const type of ['draw','payment','history']) {
   const c=type==='history'?historical([{memberIndex:0,settled:true}]):make({bukkiFirst:false});
   const viewer=addMember(c,{name:'Viewer',entries:0});
   if(type==='draw')draw(c,c.rounds[0].id);
   if(type==='payment')payment(c,c.rounds[0].id,c.bukkiId,true);
-  assert.equal(sharesLocked(c),true);
-  const before=structuredClone(c);
-  assert.throws(()=>assignShares(c,viewer.id,1),/locked/);
-  assert.throws(()=>addMember(c,{name:'New payer',entries:1}),/locked/);
-  assert.deepEqual(c,before);
-  addMember(c,{name:'Later viewer',entries:0});
-  assert.equal(c.entries.length,before.entries.length);
+  const original=structuredClone(c.rounds[0]);
+  assignShares(c,viewer.id,2);
+  assert.equal(sharesLocked(c),false);
+  assert.equal(c.entries.length,6);assert.equal(c.rounds.length,6);
+  assert.deepEqual(c.rounds[0].draw,original.draw);
+  assert.deepEqual(c.rounds[0].payments,original.payments);
+  assert.equal(c.rounds[0].paidAt,original.paidAt);
+  assert.equal(c.rounds[0].shareAdjustments?.length||0,type==='history'?1:0);
+  if(type==='history')assert.equal(c.rounds[0].shareAdjustments[0].amount,10000);
  }
 });
 test('new shares keep full-session fairness and viewers never need collection marks',()=>{
@@ -106,4 +109,69 @@ test('new shares keep full-session fairness and viewers never need collection ma
   assert.equal(collected(c,r),c.entries.length*c.amount);payout(c,r.id);
  }
  assert.equal(winners.length,c.entries.length);assert.equal(new Set(winners).size,c.entries.length);
+});
+test('late members owe past contributions and each previous winner receives the matching extra payout',()=>{
+ const c=historical([{memberIndex:0,settled:true},{memberIndex:1,settled:true}]);
+ const originals=c.rounds.slice(0,2).map(r=>structuredClone(r));
+ const viewer=addMember(c,{name:'Late member',entries:0});assignShares(c,viewer.id,2);
+ assert.equal(c.entries.length,6);assert.equal(c.rounds.length,6);assert.equal(c.rounds.at(-1).month,'2021-04');
+ assert.deepEqual(adjustmentTotals(c),{contributionsDue:20000,payoutsDue:20000,pending:2});
+ for(let i=0;i<2;i++) {
+  const r=c.rounds[i],a=r.shareAdjustments[0];
+  assert.deepEqual(r.draw,originals[i].draw);assert.equal(r.winner,originals[i].winner);assert.equal(r.paidAt,originals[i].paidAt);
+  assert.equal(r.paidAmount,20000);assert.equal(paidOut(c,r),20000);assert.equal(collected(c,r),20000);
+  assert.equal(a.memberId,viewer.id);assert.equal(a.entries,2);assert.equal(a.amount,10000);
+  assert.throws(()=>topup(c,r.id,a.id),/Collect/);
+  catchup(c,r.id,a.id,true);assert.equal(collected(c,r),30000);assert.equal(memberPaid(r,viewer.id),true);
+  const stamp=a.collectedAt;catchup(c,r.id,a.id,true);assert.equal(a.collectedAt,stamp);
+  catchup(c,r.id,a.id,false);assert.equal(collected(c,r),20000);
+  catchup(c,r.id,a.id,true);topup(c,r.id,a.id);const paidAt=a.paidAt;topup(c,r.id,a.id);assert.equal(a.paidAt,paidAt);
+  assert.equal(paidOut(c,r),30000);assert.throws(()=>catchup(c,r.id,a.id,false),/cannot be undone/);
+  assert.throws(()=>payment(c,r.id,viewer.id,true),/locked/);
+ }
+ assert.deepEqual(adjustmentTotals(c),{contributionsDue:0,payoutsDue:0,pending:0});
+});
+test('unsettled catch-up balances block new draws and regular payouts until extra transfers are confirmed',()=>{
+ const c=historical([{memberIndex:0,settled:true}]);
+ const r=currentRound(c);draw(c,r.id);const saved=structuredClone(r.draw),winner=r.winner;
+ addMember(c,{name:'Late member',entries:1});
+ c.members.forEach(m=>payment(c,r.id,m.id,true));
+ assert.throws(()=>payout(c,r.id),/catch-up/);
+ const past=c.rounds[0],a=past.shareAdjustments[0];
+ catchup(c,past.id,a.id,true);assert.throws(()=>payout(c,r.id),/catch-up/);
+ topup(c,past.id,a.id);payout(c,r.id);
+ assert.deepEqual(r.draw,saved);assert.equal(r.winner,winner);assert.equal(r.paidAmount,25000);
+});
+test('multiple late joins balance every member over the extended session',()=>{
+ const c=make({bukkiFirst:false});
+ function settleMonth(){const r=currentRound(c);draw(c,r.id);c.members.filter(m=>m.entries).forEach(m=>payment(c,r.id,m.id,true));payout(c,r.id);}
+ settleMonth();settleMonth();
+ addMember(c,{name:'First late member',entries:2});addMember(c,{name:'Second late member',entries:1});
+ assert.deepEqual(adjustmentTotals(c),{contributionsDue:30000,payoutsDue:30000,pending:4});
+ assert.throws(()=>draw(c,currentRound(c).id),/catch-up/);
+ for(const r of c.rounds)for(const a of r.shareAdjustments||[]){catchup(c,r.id,a.id,true);topup(c,r.id,a.id);}
+ while(currentRound(c))settleMonth();
+ assert.equal(c.rounds.length,7);assert.equal(new Set(c.rounds.map(r=>r.winner)).size,7);
+ for(const r of c.rounds){assert.equal(collected(c,r),monthlyPot(c));assert.equal(paidOut(c,r),monthlyPot(c));}
+ for(const member of c.members){
+  const contributions=c.rounds.reduce((sum,r)=>sum+(memberPaid(r,member.id)?member.entries*c.amount:0),0);
+  const received=c.rounds.filter(r=>c.entries.find(e=>e.id===r.winner).memberId===member.id).reduce((sum,r)=>sum+paidOut(c,r),0);
+  assert.equal(received,contributions,member.name+' should receive exactly their full-session contributions');
+ }
+});
+test('new entries can extend a finished committee without erasing settled payouts',()=>{
+ const c=make({bukkiFirst:false});
+ while(currentRound(c)){const r=currentRound(c);draw(c,r.id);c.members.forEach(m=>payment(c,r.id,m.id,true));payout(c,r.id);}
+ const past=c.rounds.map(r=>({id:r.id,paidAt:r.paidAt,winner:r.winner}));
+ addMember(c,{name:'New entry',entries:1});
+ assert.equal(c.rounds.length,5);assert.equal(currentRound(c),c.rounds[4]);
+ assert.deepEqual(c.rounds.slice(0,4).map(r=>({id:r.id,paidAt:r.paidAt,winner:r.winner})),past);
+ assert.equal(adjustmentTotals(c).pending,4);
+});
+test('invalid or excessive late allocations leave the committee unchanged',()=>{
+ const c=historical([{memberIndex:0,settled:true}]),m=addMember(c,{name:'Viewer',entries:0}),before=structuredClone(c);
+ for(const n of [0,-1,1.5,13,NaN]){assert.throws(()=>assignShares(c,m.id,n));assert.deepEqual(c,before);}
+ for(let i=0;i<9;i++)addMember(c,{name:'Member '+i,entries:12});
+ addMember(c,{name:'Fill remaining',entries:8});assert.equal(c.entries.length,120);assert.equal(sharesLocked(c),true);
+ const full=structuredClone(c);assert.throws(()=>assignShares(c,m.id,1),/120/);assert.deepEqual(c,full);
 });

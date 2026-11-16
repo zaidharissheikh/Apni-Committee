@@ -1,4 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
+import { collected, adjustmentTotals, monthlyPot } from '../shared/ledger.js';
+export { collected } from '../shared/ledger.js';
 export const uid = () => randomUUID();
 export function createCommittee(input) {
   const name=String(input.name||'').trim(), amount=Number(input.amount);
@@ -49,15 +51,21 @@ export function createCommittee(input) {
 export function eligible(c) {const winners=new Set(c.rounds.map(r=>r.winner).filter(Boolean));return c.entries.filter(e=>!winners.has(e.id));}
 export function currentRound(c) {return c.rounds.find(r=>!r.paidAt);}
 export function sharesLocked(c) {
- return c.rounds.some(r=>r.paidAt || (r.draw && r.draw.type!=='bukki') || Object.values(r.payments).some(p=>p.paid));
+ return c.entries.length>=120;
 }
 export function assignShares(c,memberId,count) {
  const member=c.members.find(m=>m.id===memberId), entries=Number(count);
  if(!member) throw Error('Member not found.');
  if(member.entries!==0) throw Error('This member already has shares assigned.');
- if(sharesLocked(c)) throw Error('Shares are locked after collections or draws begin. Invite an existing member to link their shares instead.');
  if(!Number.isInteger(entries)||entries<1||entries>12) throw Error('Assign between 1 and 12 shares.');
  if(c.entries.length+entries>120) throw Error('A session can have at most 120 entries.');
+ const oldPot=monthlyPot(c), now=new Date().toISOString();
+ for(const round of c.rounds.filter(r=>r.paidAt)) {
+  // Preserve the original transfer. Late contributions and the matching extra
+  // payouts are new ledger items, never edits to an earlier settlement.
+  round.paidAmount??=oldPot;
+  (round.shareAdjustments??=[]).push({id:uid(),memberId,entries,amount:entries*c.amount,createdAt:now,collectedAt:null,paidAt:null});
+ }
  const [year,month]=c.start.split('-').map(Number);
  for(let i=0;i<entries;i++) {
   const index=c.entries.length;
@@ -77,15 +85,29 @@ export function addMember(c,input) {
  const member={id:uid(),name,entries:0};
  if(entries) {
   // Validate before changing the committee, including for callers outside a DB transaction.
-  if(sharesLocked(c)) throw Error('Shares are locked after collections or draws begin.');
   if(c.entries.length+entries>120) throw Error('A session can have at most 120 entries.');
  }
  c.members.push(member);
  if(entries) assignShares(c,member.id,entries);
  return member;
 }
-export function collected(c,r) {return c.members.reduce((sum,m)=>sum+(r.payments[m.id]?.paid?m.entries*c.amount:0),0);}
+export function catchup(c,roundId,adjustmentId,paid) {
+ const round=c.rounds.find(r=>r.id===roundId), adjustment=round?.shareAdjustments?.find(a=>a.id===adjustmentId);
+ if(!round?.paidAt||!adjustment) throw Error('Catch-up contribution not found.');
+ if(typeof paid!=='boolean') throw Error('Payment status must be true or false.');
+ if(!paid&&adjustment.paidAt) throw Error('This contribution funded a confirmed extra payout and cannot be undone.');
+ adjustment.collectedAt=paid?(adjustment.collectedAt||new Date().toISOString()):null;
+ return adjustment;
+}
+export function topup(c,roundId,adjustmentId) {
+ const round=c.rounds.find(r=>r.id===roundId), adjustment=round?.shareAdjustments?.find(a=>a.id===adjustmentId);
+ if(!round?.paidAt||!adjustment) throw Error('Extra payout not found.');
+ if(!adjustment.collectedAt) throw Error('Collect this catch-up contribution before confirming its extra payout.');
+ adjustment.paidAt??=new Date().toISOString();
+ return adjustment;
+}
 export function draw(c,roundId) {
+ if(adjustmentTotals(c).pending) throw Error('Settle catch-up contributions and extra payouts in the ledger before drawing again.');
  const r=c.rounds.find(x=>x.id===roundId);
  if(!r || r!==currentRound(c)) throw Error('Finish the current month before drawing the next.');
  if(r.winner) throw Error('This month already has a winner.');
@@ -103,4 +125,4 @@ export function payment(c,roundId,memberId,paid){
  if(typeof paid!=='boolean') throw Error('Payment status must be true or false.');
  r.payments[memberId]={paid,at:new Date().toISOString()};return r;
 }
-export function payout(c,roundId){const r=c.rounds.find(x=>x.id===roundId);if(!r||r!==currentRound(c)||!r.winner)throw Error('Draw a winner for the current month first.');if(collected(c,r)!==c.entries.length*c.amount)throw Error('Collect all contributions before confirming the payout.');r.paidAt=new Date().toISOString();return r;}
+export function payout(c,roundId){const r=c.rounds.find(x=>x.id===roundId);if(!r||r!==currentRound(c)||!r.winner)throw Error('Draw a winner for the current month first.');if(adjustmentTotals(c).pending)throw Error('Settle catch-up contributions and extra payouts in the ledger before confirming this payout.');if(collected(c,r)!==monthlyPot(c))throw Error('Collect all contributions before confirming the payout.');r.paidAmount=monthlyPot(c);r.paidAt=new Date().toISOString();return r;}

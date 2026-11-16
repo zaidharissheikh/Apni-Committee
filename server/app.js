@@ -1,5 +1,5 @@
 ﻿import express from 'express';
-import { createCommittee, draw, payment, payout, addMember, assignShares, sharesLocked } from './domain.js';
+import { createCommittee, draw, payment, payout, addMember, assignShares, sharesLocked, catchup, topup } from './domain.js';
 import { installAuth, digest, token, fail } from './auth.js';
 
 export function createApp(store, { publicOrigin, secureCookies = false, trustProxy = false } = {}) {
@@ -37,8 +37,9 @@ export function createApp(store, { publicOrigin, secureCookies = false, trustPro
   }
   async function present(record, user) {
     const admin = record.owner_id === user.id, c = record.committee;
-    const linked = (await db.prepare('SELECT member_id FROM memberships WHERE committee_id=?').all(c.id)).map(x => x.member_id);
-    return { ...c, role: admin ? 'bukki' : 'member', sharesLocked: sharesLocked(c), members: c.members.map(m => ({ ...m, linked: linked.includes(m.id) })) };
+    const memberships = await db.prepare('SELECT member_id,user_id FROM memberships WHERE committee_id=?').all(c.id);
+    const linked = memberships.map(x => x.member_id);
+    return { ...c, role: admin ? 'bukki' : 'member', myMemberId: admin ? c.bukkiId : memberships.find(m => m.user_id === user.id)?.member_id, sharesLocked: sharesLocked(c), members: c.members.map(m => ({ ...m, linked: linked.includes(m.id) })) };
   }
   const owned = (c, user) => present({ committee: c, owner_id: user.id }, user);
   app.get('/api/committees', async (req, res) => {
@@ -73,14 +74,23 @@ export function createApp(store, { publicOrigin, secureCookies = false, trustPro
   });
   app.post('/api/committees/:id/invites', async (req, res) => {
     const raw = token(), expiresAt = Date.now() + 7 * 86400000;
-    await transaction(async () => {
+    const allocation = await transaction(async () => {
       const { committee: c } = await access(req.params.id, req.user, true);
       const memberId = req.body.memberId || null;
       if (memberId && (!c.members.some(m => m.id === memberId) || memberId === c.bukkiId || await db.prepare('SELECT 1 FROM memberships WHERE committee_id=? AND member_id=?').get(c.id, memberId))) throw fail('Choose an unlinked member other than the Bukki.');
-      await db.prepare('DELETE FROM invites WHERE committee_id=? AND member_id IS NOT DISTINCT FROM ?').run(c.id, memberId);
-      await db.prepare('INSERT INTO invites VALUES(?,?,?,?)').run(digest(raw), c.id, memberId, expiresAt);
+      const target = c.members.find(m => m.id === memberId);
+      const entries = req.body.entries ?? (target?.entries || 1);
+      if (!Number.isInteger(entries) || entries < 1 || entries > 12) throw fail('Choose between 1 and 12 entries for this invitation.');
+      if (target?.entries && entries !== target.entries) throw fail('This member already has entries. Their invitation must keep that entry count.');
+      if (!target?.entries && (c.entries.length + entries > 120 || (!target && c.members.length >= 100))) throw fail('This invitation exceeds the committee member or entry limit.');
+      // New-person links are independent, single-use allocations. Creating a link
+      // for someone else must not invalidate invitations already sent.
+      if (memberId) await db.prepare('DELETE FROM invites WHERE committee_id=? AND member_id=?').run(c.id, memberId);
+      await db.prepare('INSERT INTO invites(token_hash,committee_id,member_id,expires_at) VALUES(?,?,?,?)').run(digest(raw), c.id, memberId, expiresAt);
+      await db.prepare('INSERT INTO invite_options(token_hash,entries,used_by) VALUES(?,?,NULL)').run(digest(raw), entries);
+      return { entries, addsEntries: !target?.entries };
     });
-    res.status(201).json({ token: raw, expiresAt });
+    res.status(201).json({ token: raw, expiresAt, ...allocation });
   });
   app.delete('/api/committees/:id/invites', async (req, res) => {
     await transaction(async () => {
@@ -100,17 +110,25 @@ export function createApp(store, { publicOrigin, secureCookies = false, trustPro
       if (!record || !invite) throw fail('This invite link is invalid or has expired. Ask the Bukki for a new link.', 404);
       const c = record.committee;
       if (record.owner_id === req.user.id || await db.prepare('SELECT 1 FROM memberships WHERE committee_id=? AND user_id=?').get(c.id, req.user.id)) return record;
+      const options = await db.prepare('SELECT entries,used_by FROM invite_options WHERE token_hash=?').get(digest(req.params.token));
+      if (options?.used_by) throw fail('This invitation has already been used. Ask the Bukki for your own link.', 409);
+      const inviteEntries = Number(options?.entries ?? 1);
       let memberId = invite.member_id;
       if (memberId) {
         if (await db.prepare('SELECT 1 FROM memberships WHERE committee_id=? AND member_id=?').get(c.id, memberId)) throw fail('This member invite has already been used. Ask the Bukki for another link.', 409);
+        const target = c.members.find(m => m.id === memberId);
+        if (!target) throw fail('This member is no longer in the committee.', 404);
+        if (!target.entries) assignShares(c, memberId, inviteEntries);
+        else if (options && target.entries !== inviteEntries) throw fail('This member’s entries changed. Ask the Bukki for a new link.', 409);
       } else {
         const base = req.user.email.split('@')[0].slice(0, 45);
         let name = base, i = 2;
         while (c.members.some(m => m.name.toLowerCase() === name.toLowerCase())) name = `${base} (${i++})`;
-        memberId = addMember(c, { name, entries: 0 }).id;
-        await store.save(c);
+        memberId = addMember(c, { name, entries: inviteEntries }).id;
       }
+      await store.save(c);
       await db.prepare('INSERT INTO memberships VALUES(?,?,?)').run(c.id, req.user.id, memberId);
+      await db.prepare('INSERT INTO invite_options(token_hash,entries,used_by) VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET used_by=excluded.used_by').run(digest(req.params.token), inviteEntries, req.user.id);
       return record;
     });
     res.json(await present(record, req.user));
@@ -118,13 +136,15 @@ export function createApp(store, { publicOrigin, secureCookies = false, trustPro
   app.post('/api/committees/:id/:action', async (req, res) => {
     const c = await transaction(async () => {
       const { committee: c } = await access(req.params.id, req.user, true);
-      const { roundId, memberId, paid } = req.body;
+      const { roundId, memberId, paid, adjustmentId } = req.body;
       switch (req.params.action) {
         case 'draw': draw(c, roundId); break;
         case 'payment': payment(c, roundId, memberId, paid); break;
         case 'payout': payout(c, roundId); break;
         case 'members': addMember(c, req.body); break;
         case 'shares': assignShares(c, memberId, req.body.entries); break;
+        case 'catchup': catchup(c, roundId, adjustmentId, paid); break;
+        case 'topup': topup(c, roundId, adjustmentId); break;
         default: throw fail('Unknown action.', 404);
       }
       await store.save(c); return c;
