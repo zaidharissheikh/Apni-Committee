@@ -1,0 +1,13 @@
+﻿import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { openRuntimeStore, runtimeOptions } from './runtime.js';
+import { createApp } from './app.js';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const store = await openRuntimeStore();
+const app = createApp(store, runtimeOptions());
+app.use(express.static(path.join(root, 'dist')));
+app.get('/{*path}', (req, res) => res.sendFile(path.join(root, 'dist/index.html')));
+const port = Number(process.env.PORT || 3001);
+const server = app.listen(port, process.env.HOST || '127.0.0.1', () => console.log(`Apni Committee API: http://127.0.0.1:${port}`));
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(async () => { await store.close(); process.exit(0); }));

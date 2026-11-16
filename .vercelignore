@@ -1,0 +1,10 @@
+data
+.env
+.env.*
+!.env.example
+.npm-cache
+.browser-qa
+.hallmark
+tests
+scripts
+node_modules

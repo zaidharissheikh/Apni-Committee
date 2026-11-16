@@ -1,0 +1,6 @@
+:root {
+ --color-paper:#faf7ef;--color-paper-2:#f0ebdf;--color-white:#fffef9;--color-ink:#253c35;--color-ink-2:#354e45;--color-muted:#68766c;--color-rule:#dfdfd1;--color-accent:#bb2457;--color-accent-deep:#9f1847;--color-accent-ink:#fff9ed;--color-teal:#145f53;--color-teal-dark:#104c42;--color-teal-soft:#e6eee6;--color-mango:#f5c850;--color-mango-soft:#fff0bd;--color-rose:#f5e0dd;--color-lilac:#e9e3ef;--color-error:#a82338;--color-error-bg:#fbe8e8;--color-focus:#a31e4b;--color-backdrop:#24372f99;--color-clear:transparent;
+ --font-display:'Bowlby One SC','Arial Black',sans-serif;--font-body:'Sofia Sans',sans-serif;--font-urdu:'Noto Nastaliq Urdu',serif;
+ --space-2xs:4px;--space-xs:8px;--space-sm:12px;--space-md:16px;--space-lg:24px;--space-xl:32px;--space-2xl:48px;--space-3xl:64px;--space-4xl:80px;
+ --radius-card:18px;--radius-control:8px;--radius-pill:100px;--container:1240px;--shadow-card:4px 5px 0 var(--color-ink);--dur-micro:150ms;
+}

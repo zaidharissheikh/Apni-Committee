@@ -1,0 +1,80 @@
+# Dependencies, builds, coverage, and caches
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+.cache/
+.npm-cache/
+.npm/
+.pnpm-store/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+
+# Environment secrets; commit only the placeholder template
+.env
+.env.*
+!.env.example
+.npmrc
+.netrc
+
+# Local records contain accounts, passcode hashes, sessions, and committee data
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.db-wal
+*.db-shm
+*.db-journal
+backups/
+exports/
+*.bak
+*.backup
+*.dump
+*.sql.gz
+*.sql.zip
+committee-ledger*.csv
+
+# Private keys, credential files, and local cloud configuration
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+service-account*.json
+credentials.json
+.aws/
+.ssh/
+
+# Deployment state and generated design/browser artifacts
+.vercel/
+.hallmark/
+.browser-qa/
+
+# Logs, process files, and temporary editor files
+logs/
+*.log
+*.pid
+*.pid.lock
+report.*.json
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Local editor and operating-system settings
+.idea/
+.vscode/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+Desktop.ini
